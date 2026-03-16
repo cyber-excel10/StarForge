@@ -205,7 +205,7 @@ Please keep PRs scoped to a single issue and include a clear description of what
 
 Issues labeled `Stellar Wave` are available for contributors during an active sprint.
 
-### 🟢 Trivial — 100 Points
+### 🟢 Trivial
 
 - [ ] Add `--network` flag to `wallet create` to override the global default
 - [ ] Add `starforge wallet rename <old> <new>` command
@@ -213,7 +213,7 @@ Issues labeled `Stellar Wave` are available for contributors during an active sp
 - [ ] Show wallet count and config path in `starforge wallet list`
 - [ ] Add `--quiet` flag to suppress the ASCII banner
 
-### 🟡 Medium — 150 Points
+### 🟡 Medium
 
 - [ ] Add `starforge network switch <testnet|mainnet>` command to update global config
 - [ ] Add `starforge wallet export` to output a wallet's public key as a QR code in the terminal
@@ -221,7 +221,7 @@ Issues labeled `Stellar Wave` are available for contributors during an active sp
 - [ ] Encrypt secret keys at rest in config.toml using a user-provided passphrase
 - [ ] Add `starforge tx history <public-key>` to display recent transactions in the terminal
 
-### 🔴 High — 200 Points
+### 🔴 High
 
 - [ ] Implement real ed25519 Stellar keypair generation (replace mock generator)
 - [ ] Add `starforge contract invoke` to call a deployed Soroban contract function from the CLI
