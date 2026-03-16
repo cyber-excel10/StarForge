@@ -1,0 +1,234 @@
+use crate::utils::{config, horizon, print as p};
+use anyhow::Result;
+use chrono::Utc;
+use clap::Subcommand;
+use colored::*;
+use rand::RngCore;
+
+#[derive(Subcommand)]
+pub enum WalletCommands {
+    /// Create a new keypair and save it locally
+    Create {
+        /// A friendly name for the wallet (e.g. "alice", "deployer")
+        name: String,
+        /// Fund the wallet via Friendbot immediately (testnet only)
+        #[arg(long, default_value = "false")]
+        fund: bool,
+    },
+    /// List all saved wallets
+    List,
+    /// Show details of a saved wallet including live balance
+    Show {
+        /// Wallet name
+        name: String,
+        /// Reveal the secret key in plaintext
+        #[arg(long, default_value = "false")]
+        reveal: bool,
+    },
+    /// Fund a wallet via Friendbot (testnet only)
+    Fund {
+        /// Wallet name to fund
+        name: String,
+    },
+    /// Remove a wallet from local storage
+    Remove {
+        /// Wallet name to remove
+        name: String,
+    },
+}
+
+pub fn handle(cmd: WalletCommands) -> Result<()> {
+    match cmd {
+        WalletCommands::Create { name, fund } => create(name, fund),
+        WalletCommands::List                  => list(),
+        WalletCommands::Show { name, reveal } => show(name, reveal),
+        WalletCommands::Fund { name }         => fund_wallet(name),
+        WalletCommands::Remove { name }       => remove(name),
+    }
+}
+
+/// Generate a mock Stellar-style keypair for the MVP scaffold.
+/// A full implementation replaces this with real ed25519 key derivation.
+fn generate_keypair() -> (String, String) {
+    let alphabet = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    let mut rng = rand::thread_rng();
+    let mut buf = [0u8; 64];
+    rng.fill_bytes(&mut buf);
+
+    let pub_key: String = std::iter::once('G')
+        .chain(buf[..55].iter().map(|b| alphabet[(b % 32) as usize] as char))
+        .collect();
+    let sec_key: String = std::iter::once('S')
+        .chain(buf[8..63].iter().map(|b| alphabet[(b % 32) as usize] as char))
+        .collect();
+    (pub_key, sec_key)
+}
+
+fn create(name: String, fund: bool) -> Result<()> {
+    let mut cfg = config::load()?;
+
+    if cfg.wallets.iter().any(|w| w.name == name) {
+        anyhow::bail!("A wallet named '{}' already exists.", name);
+    }
+
+    let steps = if fund { 3 } else { 2 };
+    p::header(&format!("Creating wallet '{}'", name));
+
+    p::step(1, steps, "Generating keypair…");
+    let (public_key, secret_key) = generate_keypair();
+    println!();
+    p::kv_accent("Public Key", &public_key);
+    p::kv("Secret Key", &"*".repeat(56));
+    println!();
+
+    p::step(2, steps, "Saving to ~/.starforge/config.toml…");
+    let wallet = config::WalletEntry {
+        name: name.clone(),
+        public_key: public_key.clone(),
+        secret_key: Some(secret_key),
+        network: cfg.network.clone(),
+        created_at: Utc::now().to_rfc3339(),
+        funded: false,
+    };
+    cfg.wallets.push(wallet);
+
+    if fund {
+        if cfg.network == "mainnet" {
+            p::warn("Friendbot is not available on Mainnet. Skipping fund step.");
+        } else {
+            p::step(3, steps, "Funding via Friendbot…");
+            match horizon::fund_account(&public_key) {
+                Ok(_) => {
+                    if let Some(w) = cfg.wallets.iter_mut().find(|w| w.name == name) {
+                        w.funded = true;
+                    }
+                    p::success("Funded with 10,000 XLM on testnet");
+                }
+                Err(e) => p::warn(&format!("Funding failed: {}", e)),
+            }
+        }
+    }
+
+    config::save(&cfg)?;
+    println!();
+    p::success(&format!("Wallet '{}' created and saved!", name));
+    p::info(&format!(
+        "View it with: {}",
+        format!("starforge wallet show {}", name).cyan()
+    ));
+    Ok(())
+}
+
+fn list() -> Result<()> {
+    let cfg = config::load()?;
+    p::header("Saved Wallets");
+    p::separator();
+
+    if cfg.wallets.is_empty() {
+        p::info("No wallets yet. Run `starforge wallet create <name>` to get started.");
+        return Ok(());
+    }
+
+    for (i, w) in cfg.wallets.iter().enumerate() {
+        let tag = if w.funded {
+            " [funded]".green().to_string()
+        } else {
+            " [unfunded]".dimmed().to_string()
+        };
+        println!("  {:>2}.  {}{}", i + 1, w.name.bright_white().bold(), tag);
+        println!("       {} {}", "Key:".dimmed(), w.public_key.cyan());
+        println!("       {} {}", "Net:".dimmed(), w.network.dimmed());
+        println!();
+    }
+
+    p::separator();
+    println!(
+        "  {} wallet(s) — {}",
+        cfg.wallets.len(),
+        config::config_path().display()
+    );
+    Ok(())
+}
+
+fn show(name: String, reveal: bool) -> Result<()> {
+    let cfg = config::load()?;
+    let w = cfg
+        .wallets
+        .iter()
+        .find(|w| w.name == name)
+        .ok_or_else(|| anyhow::anyhow!("Wallet '{}' not found", name))?;
+
+    p::header(&format!("Wallet: {}", w.name));
+    p::separator();
+    p::kv_accent("Public Key", &w.public_key);
+
+    if reveal {
+        if let Some(sk) = &w.secret_key {
+            p::kv("Secret Key", sk);
+        }
+    } else {
+        p::kv("Secret Key", &format!("{} (--reveal to show)", "*".repeat(20)));
+    }
+
+    p::kv("Network",  &w.network);
+    p::kv("Funded",   if w.funded { "yes" } else { "no" });
+    p::kv("Created",  &w.created_at);
+    p::separator();
+
+    p::info(&format!("Fetching live balance on {}…", w.network));
+    match horizon::fetch_account(&w.public_key, &w.network) {
+        Ok(account) => {
+            println!();
+            for bal in &account.balances {
+                let asset = bal.asset_code.as_deref().unwrap_or("XLM");
+                p::kv_accent(asset, &format!("{} {}", bal.balance, asset));
+            }
+        }
+        Err(_) => {
+            p::warn("Account not yet active on-chain. Fund it with `starforge wallet fund`");
+        }
+    }
+    Ok(())
+}
+
+fn fund_wallet(name: String) -> Result<()> {
+    let mut cfg = config::load()?;
+
+    if cfg.network == "mainnet" {
+        anyhow::bail!("Friendbot is not available on Mainnet.");
+    }
+
+    let public_key = cfg
+        .wallets
+        .iter()
+        .find(|w| w.name == name)
+        .map(|w| w.public_key.clone())
+        .ok_or_else(|| anyhow::anyhow!("Wallet '{}' not found", name))?;
+
+    p::info(&format!("Funding '{}' via Friendbot…", name));
+    horizon::fund_account(&public_key)?;
+
+    if let Some(w) = cfg.wallets.iter_mut().find(|w| w.name == name) {
+        w.funded = true;
+    }
+    config::save(&cfg)?;
+
+    println!();
+    p::success("Account funded with 10,000 XLM on testnet!");
+    p::kv_accent("Public Key", &public_key);
+    Ok(())
+}
+
+fn remove(name: String) -> Result<()> {
+    let mut cfg = config::load()?;
+    let before = cfg.wallets.len();
+    cfg.wallets.retain(|w| w.name != name);
+
+    if cfg.wallets.len() == before {
+        anyhow::bail!("No wallet named '{}' found", name);
+    }
+
+    config::save(&cfg)?;
+    p::success(&format!("Wallet '{}' removed", name));
+    Ok(())
+}
