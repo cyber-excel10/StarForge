@@ -21,7 +21,8 @@ dirs     = "=5.0.1"
 anyhow   = "1.0"
 chrono   = { version = "0.4", features = ["serde"] }
 rand     = "0.8"
-ureq = { version = "=2.7.1", features = ["json"] }
+ureq       = { version = "=2.7.1", features = ["json"] }
+dialoguer  = { version = "0.11", features = ["fuzzy-select"] }
 
 [profile.release]
 opt-level = 3

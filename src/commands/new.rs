@@ -2,6 +2,7 @@ use crate::utils::print as p;
 use anyhow::Result;
 use clap::Subcommand;
 use colored::*;
+use dialoguer::{theme::ColorfulTheme, Confirm, Input, Select};
 use std::fs;
 use std::path::Path;
 
@@ -15,6 +16,9 @@ pub enum NewCommands {
         #[arg(long, default_value = "hello-world",
               value_parser = ["hello-world", "token", "nft", "voting"])]
         template: String,
+        /// Interactively customize the generated contract
+        #[arg(long)]
+        interactive: bool,
     },
     /// Scaffold a new Stellar dApp (Vite + React)
     Dapp {
@@ -25,12 +29,109 @@ pub enum NewCommands {
 
 pub fn handle(cmd: NewCommands) -> Result<()> {
     match cmd {
-        NewCommands::Contract { name, template } => scaffold_contract(name, template),
-        NewCommands::Dapp { name }               => scaffold_dapp(name),
+        NewCommands::Contract { name, template, interactive } => {
+            if interactive {
+                scaffold_contract_interactive(name)
+            } else {
+                scaffold_contract(name, template, "MIT", "", "none", true)
+            }
+        }
+        NewCommands::Dapp { name } => scaffold_dapp(name),
     }
 }
 
-fn scaffold_contract(name: String, template: String) -> Result<()> {
+// ── Interactive mode ──────────────────────────────────────────────────────────
+
+struct ContractOptions {
+    name:         String,
+    author:       String,
+    license:      String,
+    storage:      String,
+    include_tests: bool,
+}
+
+fn scaffold_contract_interactive(default_name: String) -> Result<()> {
+    let theme = ColorfulTheme::default();
+
+    println!();
+    println!("  {} Let's set up your contract.\n", "✦".cyan());
+
+    // 1. Contract name
+    let name: String = Input::with_theme(&theme)
+        .with_prompt("Contract name")
+        .default(default_name)
+        .interact_text()?;
+
+    // 2. Author
+    let author: String = Input::with_theme(&theme)
+        .with_prompt("Author name")
+        .default(String::from("Your Name"))
+        .interact_text()?;
+
+    // 3. License
+    let licenses = &["MIT", "Apache-2.0", "None"];
+    let license_idx = Select::with_theme(&theme)
+        .with_prompt("License")
+        .items(licenses)
+        .default(0)
+        .interact()?;
+    let license = licenses[license_idx].to_string();
+
+    // 4. Storage type
+    let storage_opts = &["persistent", "temporary", "none"];
+    let storage_idx = Select::with_theme(&theme)
+        .with_prompt("Storage type")
+        .items(storage_opts)
+        .default(0)
+        .interact()?;
+    let storage = storage_opts[storage_idx].to_string();
+
+    // 5. Test suite
+    let include_tests = Confirm::with_theme(&theme)
+        .with_prompt("Include a test module?")
+        .default(true)
+        .interact()?;
+
+    let opts = ContractOptions { name, author, license, storage, include_tests };
+
+    // Summary + confirm
+    println!();
+    println!("  {} Summary:", "◆".bright_white());
+    println!("    Contract name : {}", opts.name.cyan());
+    println!("    Author        : {}", opts.author.cyan());
+    println!("    License       : {}", opts.license.cyan());
+    println!("    Storage       : {}", opts.storage.cyan());
+    println!("    Tests         : {}", if opts.include_tests { "yes".green() } else { "no".yellow() });
+    println!();
+
+    let confirmed = Confirm::with_theme(&theme)
+        .with_prompt("Write files?")
+        .default(true)
+        .interact()?;
+
+    if !confirmed {
+        println!("\n  {} Aborted — no files written.\n", "✗".red());
+        return Ok(());
+    }
+
+    scaffold_contract(
+        opts.name,
+        "hello-world".to_string(), // template base; content is overridden by opts
+        &opts.license,
+        &opts.author,
+        &opts.storage,
+        opts.include_tests,
+    )
+}
+
+fn scaffold_contract(
+    name: String,
+    template: String,
+    license: &str,
+    author: &str,
+    storage: &str,
+    include_tests: bool,
+) -> Result<()> {
     let dir = Path::new(&name);
     if dir.exists() {
         anyhow::bail!("Directory '{}' already exists", name);
@@ -44,7 +145,7 @@ fn scaffold_contract(name: String, template: String) -> Result<()> {
     fs::create_dir_all(dir.join(".cargo"))?;
 
     p::step(2, 4, "Writing Cargo.toml…");
-    fs::write(dir.join("Cargo.toml"), cargo_toml(&name))?;
+    fs::write(dir.join("Cargo.toml"), cargo_toml(&name, license, author))?;
     fs::write(dir.join(".cargo/config.toml"), cargo_config())?;
     fs::write(dir.join(".gitignore"), "target/\n.soroban/\n")?;
 
@@ -53,7 +154,7 @@ fn scaffold_contract(name: String, template: String) -> Result<()> {
         "token"  => token_template(&name),
         "voting" => voting_template(&name),
         "nft"    => nft_template(&name),
-        _        => hello_world_template(&name),
+        _        => hello_world_template(&name, storage, include_tests),
     };
     fs::write(dir.join("src/lib.rs"), src)?;
 
@@ -119,12 +220,22 @@ fn to_pascal(s: &str) -> String {
 
 // ── Cargo files ──────────────────────────────────────────────────────────────
 
-fn cargo_toml(name: &str) -> String {
+fn cargo_toml(name: &str, license: &str, author: &str) -> String {
+    let license_field = if license == "None" || license.is_empty() {
+        String::new()
+    } else {
+        format!("license = \"{license}\"\n")
+    };
+    let author_field = if author.is_empty() {
+        String::new()
+    } else {
+        format!("authors = [\"{author}\"]\n")
+    };
     format!(r#"[package]
 name = "{name}"
 version = "0.1.0"
 edition = "2021"
-
+{author_field}{license_field}
 [lib]
 crate-type = ["cdylib"]
 
@@ -154,20 +265,36 @@ rustflags = ["-C", "target-feature=+multivalue,+sign-ext"]
 
 // ── Contract templates ────────────────────────────────────────────────────────
 
-fn hello_world_template(name: &str) -> String {
+fn hello_world_template(name: &str, storage: &str, include_tests: bool) -> String {
     let pascal = to_pascal(name);
-    format!(r#"#![no_std]
-use soroban_sdk::{{contract, contractimpl, symbol_short, vec, Env, Symbol, Vec}};
 
-#[contract]
-pub struct {pascal};
+    let storage_import = match storage {
+        "persistent" | "temporary" => "\nuse soroban_sdk::storage::Storage;",
+        _ => "",
+    };
 
-#[contractimpl]
-impl {pascal} {{
-    pub fn hello(env: Env, to: Symbol) -> Vec<Symbol> {{
-        vec![&env, symbol_short!("Hello"), to]
+    let storage_method = match storage {
+        "persistent" => format!(r#"
+    pub fn set_value(env: Env, key: Symbol, value: u64) {{
+        env.storage().persistent().set(&key, &value);
     }}
-}}
+
+    pub fn get_value(env: Env, key: Symbol) -> Option<u64> {{
+        env.storage().persistent().get(&key)
+    }}"#),
+        "temporary" => format!(r#"
+    pub fn set_value(env: Env, key: Symbol, value: u64) {{
+        env.storage().temporary().set(&key, &value);
+    }}
+
+    pub fn get_value(env: Env, key: Symbol) -> Option<u64> {{
+        env.storage().temporary().get(&key)
+    }}"#),
+        _ => String::new(),
+    };
+
+    let test_module = if include_tests {
+        format!(r#"
 
 #[cfg(test)]
 mod test {{
@@ -182,8 +309,30 @@ mod test {{
         let words = client.hello(&symbol_short!("Dev"));
         assert_eq!(words, vec![&env, symbol_short!("Hello"), symbol_short!("Dev")]);
     }}
-}}
-"#, pascal = pascal)
+}}"#, pascal = pascal)
+    } else {
+        String::new()
+    };
+
+    format!(
+        r#"#![no_std]
+use soroban_sdk::{{contract, contractimpl, symbol_short, vec, Env, Symbol, Vec}};{storage_import}
+
+#[contract]
+pub struct {pascal};
+
+#[contractimpl]
+impl {pascal} {{
+    pub fn hello(env: Env, to: Symbol) -> Vec<Symbol> {{
+        vec![&env, symbol_short!("Hello"), to]
+    }}{storage_method}
+}}{test_module}
+"#,
+        pascal = pascal,
+        storage_import = storage_import,
+        storage_method = storage_method,
+        test_module = test_module,
+    )
 }
 
 fn token_template(name: &str) -> String {
