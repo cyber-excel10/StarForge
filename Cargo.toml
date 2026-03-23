@@ -23,7 +23,8 @@ chrono   = { version = "0.4", features = ["serde"] }
 rand     = "0.8"
 ureq       = { version = "=2.7.1", features = ["json"] }
 dialoguer  = { version = "0.11", features = ["fuzzy-select"] }
-stellar-xdr = { version = "22.0.0", features = ["serde"] }
+stellar-xdr = { version = "22.0.0", features = ["serde", "base64"] }
+stellar-strkey = "=0.0.9"
 base64     = "0.21"
 urlencoding = "2.1"
 
