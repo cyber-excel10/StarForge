@@ -137,6 +137,21 @@ starforge contract inspect CCPYZFKEAXHHS5VVW5J45TOU7S2EODJ7TZNJIA5LKDVL3PESCES6F
 starforge info
 ```
 
+### Shell completions
+
+```bash
+# Bash — add to ~/.bashrc
+source <(starforge completions bash)
+
+# Zsh — add to ~/.zshrc
+source <(starforge completions zsh)
+
+# Fish — save to fish completions directory
+starforge completions fish > ~/.config/fish/completions/starforge.fish
+```
+
+After adding the line to your shell config, restart your shell or run `source ~/.bashrc` / `source ~/.zshrc`. Tab-completion for all subcommands and flags will then be active.
+
 ---
 
 ## Project Structure
@@ -234,7 +249,6 @@ Issues labeled `Stellar Wave` are available for contributors during an active sp
 
 ### 🔴 High
 
-- [ ] Implement real ed25519 Stellar keypair generation (replace mock generator)
 - [ ] Add `starforge contract invoke` to call a deployed Soroban contract function from the CLI
 - [ ] Add `starforge tx send` to build and submit a payment transaction
 - [ ] Add `starforge new contract` template generator — interactive prompts for custom contract scaffolding
@@ -245,7 +259,7 @@ Issues labeled `Stellar Wave` are available for contributors during an active sp
 ## Roadmap
 
 - **v0.1** — Wallet management, project scaffolding (4 templates), deploy flow ✅
-- **v0.2** — Real keypair generation, network switch command, expanded contract tooling
+- **v0.2** — Network switch command, contract inspect, stronger wallet primitives
 - **v0.3** — Contract invocation, payment transactions, key encryption
 - **v1.0** — Full Soroban developer toolkit with interactive contract CLI
 
